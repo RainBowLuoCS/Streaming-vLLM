@@ -75,7 +75,7 @@ See `benchmark_gui_agent.py` and `livesports3kcc.py` for benchmarks.
 
 ### 1. GUI Game Agent (Real-time Action Prediction)
 **Test Configuration:**
-- Hardware: 8x NVIDIA GPUs (TP=8)
+- Hardware: 8x NVIDIA 80G A800 GPUs (TP=8)
 - Model: Qwen3-VL-8B (Fine-tuned for GUI Agent)
 - Scenario: Continuous multi-turn interaction with high-res screenshots.
 
