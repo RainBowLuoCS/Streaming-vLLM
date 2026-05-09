@@ -15,9 +15,9 @@ An ultra-fast, lightweight streaming multi-modal inference engine based on Nano-
 * ⚡ **Optimization Suite** - Tensor Parallelism (TP) for both Language and Vision models, CUDA Graph decode acceleration, and Zero-fragmentation KV Cache management.
 * 📖 **Readable Codebase** - Clean implementation tailored for real-time video commentary and GUI agents.
 
-## Installation
+## Clone
 ```bash
-pip install git+https://github.com/YOUR_GITHUB/streaming-vllm.git
+git clone https://github.com/RainBowLuoCS/Streaming-vLLM.git
 ```
 
 ## Environment preparation
