@@ -7,7 +7,7 @@
 </p>
 
 # Streaming-vLLM
-An ultra-fast, lightweight streaming multi-modal inference engine based on Nano-vLLM. Designed for infinite context and real-time GUI/CLI Agent interactions.
+An ultra-fast, lightweight streaming multi-modal inference engine based on Nano-vLLM. Designed for infinite context in real-time GUI/CLI Agent interactions.
 
 ## Key Features
 * 🚀 **Infinite Context Streaming** - Decoupled KV Cache eviction with exact 3D MRoPE position mapping. Never OOM, never degrade.
