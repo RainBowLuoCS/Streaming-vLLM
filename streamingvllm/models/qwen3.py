@@ -110,7 +110,7 @@ class Qwen3Model(nn.Module):
             # DeepStack injection (full sequence length tensor, non-vision positions are 0)
             if (deepstack_embeds is not None
                 and deepstack_layer_indices is not None
-                and layer_idx in deepstack_layer_indices
+                and layer_idx in range(len(deepstack_layer_indices))
                 and ds_idx < len(deepstack_layer_indices)):
                 key = f"deepstack_{ds_idx}"
                 if key in deepstack_embeds:
