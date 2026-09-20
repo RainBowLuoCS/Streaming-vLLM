@@ -11,7 +11,7 @@ An ultra-fast, lightweight streaming multi-modal inference engine built from scr
 
 ## Key Features
 * 🚀 **Infinite Context Streaming** - Decoupled KV Cache eviction with exact 3D MRoPE position mapping. Never OOM, never degrade.
-* 👁️ **Multi-Modal Native** - Full support for Qwen3-VL, including DeepStack feature injection and linear-accelerated Conv3D patch embedding.
+* 👁️ **Multi-Modal Native** - Full support for Qwen3-VL Dense/MOE,Qwen3.5 Dense/MOE, including DeepStack feature injection and linear-accelerated Conv3D patch embedding.
 * ⚡ **Optimization Suite** - Tensor Parallelism (TP) for both Language and Vision models, CUDA Graph decode acceleration, and Zero-fragmentation KV Cache management.
 * 📖 **Readable Codebase** - Clean implementation tailored for real-time video commentary and GUI agents.
 
