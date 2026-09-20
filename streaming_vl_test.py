@@ -1,7 +1,6 @@
 """100-turn VL streaming stress test with prefill/decode timing."""
 import os
 import sys
-sys.path.append("/mnt/upfs/projects/pretrain/luorun/workspace/streaming-vllm-dev_guiyu")
 import io
 import random
 import urllib.request
@@ -69,10 +68,10 @@ def process_image(processor, image):
 
 def main():
     model_path = os.path.expanduser(
-        # "/mnt/upfs/projects/pretrain/luorun/datasets/Qwen/Qwen3-VL-8B-Instruct-action"
-        # "/mnt/upfs/projects/pretrain/luorun/datasets/Qwen/Qwen3-VL-30B-A3B-Instruct"
-        # "/mnt/upfs/projects/pretrain/luorun/datasets/checkpoints/Qwen/Qwen3.5-9B",
-        "/mnt/upfs/projects/pretrain/luorun/datasets/checkpoints/Qwen/Qwen3.5-35B-A3B"
+        # "Qwen/Qwen3-VL-8B-Instruct-action"
+        # 'Qwen/Qwen3-VL-30B-A3B-Instruct"
+        # "Qwen/Qwen3.5-9B",
+        "Qwen/Qwen3.5-35B-A3B"
     )
 
     print("=" * 120)
