@@ -100,10 +100,15 @@ class ModelRunner:
                 gdn_idx += 1
 
     def gdn_alloc(self, seq_id):
-        return self.gdn_pool.alloc(seq_id)
+        slot = self.gdn_pool.alloc(seq_id)
+        if self.world_size > 1:
+            dist.barrier(device_ids=[self.rank])
+        return slot
 
     def gdn_free(self, seq_id):
         self.gdn_pool.free(seq_id)
+        if self.world_size > 1:
+            dist.barrier(device_ids=[self.rank])
 
     def exit(self):
         if self.world_size > 1:
@@ -363,6 +368,13 @@ class ModelRunner:
         if self.is_moe:
             from nanovllm.layers.fused_moe import set_moe_capture_mode
             set_moe_capture_mode(True)
+        try:
+            self._capture_cudagraph_impl()
+        finally:
+            if self.is_moe:
+                set_moe_capture_mode(False)
+
+    def _capture_cudagraph_impl(self):
         hf_config = self.config.hf_config
         text_config = getattr(hf_config, "text_config", hf_config)
         max_bs = min(self.config.max_num_seqs, 512)
@@ -503,7 +515,10 @@ class ModelRunner:
     def _build_gdn_prefill_args(self, seqs):
         gdn_slots, cu, has_init = [], [0], []
         for seq in seqs:
-            gdn_slots.append(self.gdn_pool.get_slot(seq.seq_id))
+            slot = self.gdn_pool.get_slot(seq.seq_id)
+            if slot < 0:
+                raise RuntimeError(f"GDN state not allocated for sequence {seq.seq_id} on rank {self.rank}")
+            gdn_slots.append(slot)
             start = min(seq.num_cached_tokens, len(seq) - 1)
             sq = seq.num_scheduled_tokens
             cu.append(cu[-1] + sq)
@@ -514,6 +529,8 @@ class ModelRunner:
 
     def _build_gdn_decode_args(self, seqs):
         gdn_slots = [self.gdn_pool.get_slot(s.seq_id) for s in seqs]
+        if any(slot < 0 for slot in gdn_slots):
+            raise RuntimeError(f"GDN decode state missing on rank {self.rank}")
         return torch.tensor(gdn_slots, dtype=torch.int32, device="cuda")
 
     def run_streaming(self, seqs, is_prefill, kv_ops, vision_data=None, mrope_positions=None, return_stats=False):
