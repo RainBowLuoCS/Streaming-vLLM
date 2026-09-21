@@ -6,6 +6,7 @@ Supports two modes:
     (required for CUDAGraph capture/replay).
 """
 from __future__ import annotations
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -14,6 +15,9 @@ import triton
 import triton.language as tl
 
 from nanovllm.utils.context import get_pstate
+from nanovllm.layers.moe_routing import align_small_into
+
+_USE_SMALL_ROUTING = os.environ.get("NANOVLLM_MOE_SMALL_ROUTING", "0") == "1"
 
 
 # =====================================================================
@@ -147,6 +151,14 @@ def moe_align_block_size(topk_ids, block_size, num_experts):
     max_num_tokens_padded = numel + num_experts * (block_size - 1)
     max_num_blocks = (max_num_tokens_padded + block_size - 1) // block_size
 
+    if _USE_SMALL_ROUTING and numel <= 64:
+        buf = {
+            "sorted_ids": torch.empty(max_num_blocks * block_size, dtype=torch.int32, device=device),
+            "expert_ids": torch.empty(max_num_blocks, dtype=torch.int32, device=device),
+            "num_pad": torch.empty(1, dtype=torch.int32, device=device),
+        }
+        return align_small_into(topk_ids, block_size, num_experts, buf)
+
     flat = topk_ids.flatten()
     valid = flat >= 0
     safe = torch.where(valid, flat, torch.zeros_like(flat)).to(torch.int64)
@@ -186,6 +198,8 @@ def moe_align_block_size(topk_ids, block_size, num_experts):
 
 def moe_align_block_size_into(topk_ids, block_size, num_experts, buf):
     """Graph-safe alignment: writes into pre-allocated fixed-address buffers."""
+    if _USE_SMALL_ROUTING and topk_ids.numel() <= 64:
+        return align_small_into(topk_ids, block_size, num_experts, buf)
     M, top_k = topk_ids.shape
     numel = M * top_k
     device = topk_ids.device
