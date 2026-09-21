@@ -9,8 +9,74 @@ def default_weight_loader(param: nn.Parameter, loaded_weight: torch.Tensor):
     param.data.copy_(loaded_weight)
 
 
+def _load_expert_weight(model, target_name, handle, weight_name, loaded):
+    prefix, suffix = target_name.rsplit(".experts.", 1)
+    module = model.get_submodule(prefix + ".experts")
+    pieces = suffix.split(".")
+    if len(pieces) == 3 and pieces[0].isdigit() and pieces[2] == "weight":
+        eid = int(pieces[0])
+        projection = pieces[1]
+        mapping = {
+            "gate_proj": ("w13_weight", "w1"),
+            "up_proj": ("w13_weight", "w3"),
+            "down_proj": ("w2_weight", "w2"),
+        }
+        if projection not in mapping:
+            raise ValueError(f"Unsupported expert projection: {target_name}")
+        if not module.expert_start <= eid < module.expert_end:
+            return
+        pname, part = mapping[projection]
+        param_name = prefix + ".experts." + pname
+        param = model.get_parameter(param_name)
+        tensor = handle.get_tensor(weight_name).to(param.dtype)
+        param.weight_loader(param, tensor, param_name, part, eid)
+        loaded.add((param_name, eid - module.expert_start, part))
+        return
+
+    projection = suffix.removesuffix(".weight")
+    if projection not in ("gate_up_proj", "down_proj"):
+        raise ValueError(f"Unsupported expert checkpoint tensor: {target_name}")
+    pname = "w13_weight" if projection == "gate_up_proj" else "w2_weight"
+    param_name = prefix + ".experts." + pname
+    param = model.get_parameter(param_name)
+    tensor = handle.get_tensor(weight_name)
+    expected = tuple(param.shape[1:])
+    if tensor.ndim != 3 or tensor.shape[0] != module.global_num_experts:
+        raise ValueError(f"Bad expert tensor shape: {target_name}: {tuple(tensor.shape)}")
+    if tuple(tensor.shape[1:]) == expected:
+        pass
+    elif tuple(tensor.shape[1:]) == expected[::-1]:
+        tensor = tensor.transpose(-1, -2)
+    else:
+        raise ValueError(f"Bad expert projection dimensions: {target_name}: {tuple(tensor.shape)}")
+    for eid in range(module.expert_start, module.expert_end):
+        weight = tensor[eid].to(param.dtype)
+        parts = zip(("w1", "w3"), weight.chunk(2, dim=0)) if pname == "w13_weight" else (("w2", weight),)
+        for part, value in parts:
+            param.weight_loader(param, value, param_name, part, eid)
+            loaded.add((param_name, eid - module.expert_start, part))
+
+
+def _validate_expert_weights(model, loaded):
+    missing = []
+    for name, param in model.named_parameters():
+        if name.endswith(".experts.w13_weight"):
+            parts = ("w1", "w3")
+        elif name.endswith(".experts.w2_weight"):
+            parts = ("w2",)
+        else:
+            continue
+        for eid in range(param.shape[0]):
+            for part in parts:
+                if (name, eid, part) not in loaded:
+                    missing.append((name, eid, part))
+    if missing:
+        raise ValueError(f"Missing {len(missing)} local expert weight slices; first entries: {missing[:5]}")
+
+
 def load_model(model: nn.Module, path: str, name_mapping=None):
     packed_modules_mapping = getattr(model, "packed_modules_mapping", {})
+    loaded_experts = set()
 
     for file in glob(os.path.join(path, "*.safetensors")):
         with safe_open(file, "pt", "cpu") as f:
@@ -45,35 +111,9 @@ def load_model(model: nn.Module, path: str, name_mapping=None):
                     weight_loader(param, v_w, "v")
                     continue
 
-                # ---- MoE fused expert weights (format B: [E,K,2N] / [E,N,K]) ----
-                if ".experts.gate_up_proj" in target_name or ".experts.down_proj" in target_name:
-                    tensor = f.get_tensor(weight_name)  # 3D
-                    if ".experts.gate_up_proj" in target_name:
-                        param_name = target_name.replace("experts.gate_up_proj", "experts.w13_weight")
-                        t = tensor.transpose(-1, -2).contiguous()   # [E, 2N, K]
-                        gate_w, up_w = t.chunk(2, dim=-2)           # each [E, N, K]
-                        try:
-                            param = model.get_parameter(param_name)
-                        except (AttributeError, KeyError):
-                            continue
-                        if gate_w.dtype != param.dtype:
-                            gate_w = gate_w.to(param.dtype); up_w = up_w.to(param.dtype)
-                        E = tensor.shape[0]
-                        for eid in range(E):
-                            param.weight_loader(param, gate_w[eid], param_name, "w1", eid)
-                            param.weight_loader(param, up_w[eid], param_name, "w3", eid)
-                    else:
-                        param_name = target_name.replace("experts.down_proj", "experts.w2_weight")
-                        t = tensor.transpose(-1, -2).contiguous()   # [E, K, N]
-                        try:
-                            param = model.get_parameter(param_name)
-                        except (AttributeError, KeyError):
-                            continue
-                        if t.dtype != param.dtype:
-                            t = t.to(param.dtype)
-                        E = tensor.shape[0]
-                        for eid in range(E):
-                            param.weight_loader(param, t[eid], param_name, "w2", eid)
+                # Separate per-expert tensors and both packed tensor layouts.
+                if ".experts." in target_name:
+                    _load_expert_weight(model, target_name, f, weight_name, loaded_experts)
                     continue
 
                 # ---- packed modules (qkv_proj, gate_up_proj for dense layers) ----
@@ -108,6 +148,7 @@ def load_model(model: nn.Module, path: str, name_mapping=None):
                 if tensor.dtype != param.dtype:
                     tensor = tensor.to(param.dtype)
                 weight_loader(param, tensor)
+    _validate_expert_weights(model, loaded_experts)
 
 
 
@@ -167,6 +208,7 @@ def load_qwen3_5_weights(model, path, config):
         v_s = v[tp_rank * kv:(tp_rank + 1) * kv]
         return torch.cat([q_s, k_s, v_s], dim=0)
 
+    loaded_experts = set()
     for file in glob(os.path.join(path, "*.safetensors")):
         with safe_open(file, "pt", "cpu") as f:
             for wname in f.keys():
@@ -217,6 +259,9 @@ def load_qwen3_5_weights(model, path, config):
                     lidx = int(rest.split(".")[0])
                     sub = rest[len(str(lidx)) + 1:]
                     layer = layers[lidx]
+                    if sub.startswith("mlp.experts."):
+                        _load_expert_weight(model, "model.layers." + rest, f, wname, loaded_experts)
+                        continue
                     tensor = f.get_tensor(wname)
 
                     if sub == "input_layernorm.weight":
@@ -244,27 +289,6 @@ def load_qwen3_5_weights(model, path, config):
                         layer.mlp.shared_expert.up_proj.data.copy_(shard_col(tensor).to(layer.mlp.shared_expert.up_proj.dtype)); continue
                     if sub == "mlp.shared_expert.down_proj.weight":
                         layer.mlp.shared_expert.down_proj.data.copy_(shard_row(tensor).to(layer.mlp.shared_expert.down_proj.dtype)); continue
-                    if sub == "mlp.experts.gate_up_proj":
-                        # tensor: [E, 2*moe_inter, hidden] = [E, out, in]  (NO transpose)
-                        exp = layer.mlp.experts
-                        w13 = exp.w13_weight   # [E_local, 2*I, hidden]
-                        E = tensor.shape[0]
-                        I = exp.intermediate_size  # moe_inter (full, no TP for EP)
-                        gate_w, up_w = tensor.chunk(2, dim=1)  # each [E, I, hidden]
-                        gate_w = gate_w.to(w13.dtype); up_w = up_w.to(w13.dtype)
-                        for eid in range(E):
-                            exp.weight_loader(w13, gate_w[eid], "experts.w13_weight", "w1", eid)
-                            exp.weight_loader(w13, up_w[eid], "experts.w13_weight", "w3", eid)
-                        continue
-                    if sub == "mlp.experts.down_proj":
-                        # tensor: [E, hidden, moe_inter] = [E, out, in]  (NO transpose)
-                        exp = layer.mlp.experts
-                        w2 = exp.w2_weight   # [E_local, hidden, moe_inter]
-                        E = tensor.shape[0]
-                        t = tensor.to(w2.dtype)
-                        for eid in range(E):
-                            exp.weight_loader(w2, t[eid], "experts.w2_weight", "w2", eid)
-                        continue
                         
                     if layer_types[lidx] == "linear_attention":
                         la = layer.linear_attn
@@ -302,3 +326,4 @@ def load_qwen3_5_weights(model, path, config):
                         if sub == "self_attn.k_norm.weight":
                             at.k_norm.weight.data.copy_(tensor.to(at.k_norm.weight.dtype)); continue
                     continue
+    _validate_expert_weights(model, loaded_experts)
