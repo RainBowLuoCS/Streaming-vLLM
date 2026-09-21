@@ -113,7 +113,7 @@ class Qwen3MoeForCausalLM(nn.Module):
         self.config = config
         self.model = Qwen3MoeModel(config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
-        if config.tie_word_embeddings:
+        if getattr(config, "tie_word_embeddings", False):
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
     def forward(self, input_ids=None, positions=None, inputs_embeds=None,
