@@ -46,6 +46,13 @@ class Config:
         self.hf_config = AutoConfig.from_pretrained(self.model)
 
         text_config = getattr(self.hf_config, "text_config", self.hf_config)
+        kv_heads = text_config.num_key_value_heads
+        if kv_heads % self.tensor_parallel_size:
+            raise ValueError(
+                f"TP={self.tensor_parallel_size} must divide {kv_heads} KV heads; "
+                "KV-head replication is not implemented. For MoE, use EP for additional GPUs."
+            )
+
         max_pe = getattr(text_config, "max_position_embeddings", None)
         if max_pe:
             self.max_model_len = min(self.max_model_len, max_pe)
