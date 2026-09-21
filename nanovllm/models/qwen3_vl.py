@@ -1,5 +1,6 @@
 """Qwen3-VL conditional generation model wrapper (supports dense & MoE text model)."""
 from __future__ import annotations
+from copy import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,7 +18,13 @@ class Qwen3VLForConditionalGeneration(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.text_config = getattr(config, "text_config", config)
+        self.text_config = copy(getattr(config, "text_config", config))
+        # The multimodal checkpoint owns this flag. Some Transformers versions
+        # default the MoE child config to True even when the outer value is False.
+        self.text_config.tie_word_embeddings = getattr(
+            config, "tie_word_embeddings",
+            getattr(self.text_config, "tie_word_embeddings", False),
+        )
         self.vision_config = getattr(config, "vision_config", None)
         self.visual = Qwen3VLVisionEncoder(self.vision_config) if self.vision_config else None
 
